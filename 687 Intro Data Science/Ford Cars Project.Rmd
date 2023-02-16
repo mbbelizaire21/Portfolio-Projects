@@ -1,0 +1,283 @@
+---
+title: "Ford Cars Data Analysis, Final Project"
+output: html_notebook
+---
+
+***Section 1: Obtain***
+
+```{r}
+#this adds libraries we need for later in the code
+library(tidyverse)
+library(readr)
+library(maps)
+library(ggplot2)
+library(dplyr)
+library(data.table)
+library(hexbin)
+library(imputeTS)
+```
+
+This reads in the two data sets:
+
+```{r}
+#reads the Ford CSV file into R 
+Kaggle <- read.csv("C:/Users/stonej2/OneDrive - Dell Technologies/Documents/Personal/Syracuse/Semester 4/Intro to Data Science/Final Project/ford.csv")
+
+#reads the MPG CSV file from Fuel Economy.gov into R (path is from Jen's download file)
+.Gov <- read.csv("C:/Users/stonej2/OneDrive - Dell Technologies/Documents/Personal/Syracuse/Semester 4/Intro to Data Science/Final Project/vehicles.csv")
+
+```
+
+
+***Section 2: Scrub***
+
+
+This reviews and cleans the Kaggle Data:
+
+```{r}
+#We discovered data through 2060 in the dataset when testing various types of graphs; this section reviews 
+#the column names, but also looks at the unique list of years to see if there are any other strange year dates...
+
+glimpse(Kaggle)
+sort(unique(Kaggle$year))
+
+#Looks like it's just 2060. The below removes the row with 2060 data:
+KaggleData<-Kaggle[!(Kaggle$year=="2060"),]
+#Success! No more 2060 data, and only one row has been deleted.
+sort(unique(KaggleData$year))
+glimpse(KaggleData)
+
+```
+
+In order to keep the data consistent with the Kaggle Data set, we should remove dates outside of Kaggle's range.  Kaggle had 1996-2020 (note: may be some issues as Kaggle was missing '97, '99, and 2001)
+
+```{r}
+#this sorts the data by year:
+sort(unique(KaggleData$year))
+```
+
+The .Gov data set appears to have 1984 - 2023. Not sure how it has 2023... Anyway. We should remove anything before 1996 or after 2020.
+
+Since I'm removing more than 1 row, I don't want to have to list each one off individually. So I'm going to sort the data and then slice the row# it sits at.
+
+
+```{r}
+#this assigns the sorted data back to the df so we don't have to keep sorting it...
+.Gov <- .Gov[order(.Gov$year),]
+#This tells us where all the 2021 data sits at- it looks like 2021 starts at row 42194.
+options(max.print=100)
+which(.Gov == "2021", arr.ind=TRUE)
+#Using slice_head function, we'll keep only the top 42193 rows to remove 2021 data and onwards, and assign the new value to a new dataframe:
+GOVb42020 <- .Gov %>% slice_head(n = 42193)
+#this tells us where the 1996 data starts:
+which(.Gov == "1996", arr.ind=TRUE)
+#looks like it starts at row 3973.  The current data set has 42193 rows, so we need to remove 42193 - 3973 of the top rows to keep the tail section of data:
+42193-3973
+#uses slice_tail to keep just the bottom 38220 rows and assigns to new variable:
+GOV96to20 <- GOVb42020 %>% slice_tail(n = 38220)
+#checks to make sure everything looks right so far:
+str(GOV96to20)
+```
+Rather than analyzing the data for all cars - there's an awful lot here still...let's just look at Ford's major competitors. 
+According to Statista, that would be General Motors and Toyota.  Unfortunately, there's only one record of General Motors data on this report, and it's from the 1980s... so we'll be looking at just Ford and Toyota.
+
+https://www.statista.com/statistics/239614/vehicle-sales-market-share-of-ford-in-the-united-states/
+
+
+```{r}
+#Since the Kaggle Dataset is just Ford, let's focus the vehicle info in the .Gov set to also focus on just Ford.
+
+#This keeps only rows with make, "Ford":
+Fordgov <-GOV96to20[(GOV96to20$make=="Ford"),]
+#testing to see if it worked...
+unique(Fordgov$make)
+#how many unique models does that give us?
+unique(Fordgov$model)
+#Ok, a lot still to play with!
+```
+
+
+```{r}
+#There's still way too much data- 83 columns is pretty excessive... 
+glimpse(Fordgov)
+#We want the model, year, fuel type, maybe fueltype1 for more details, city MPG, highway MPG, combined MPG, fuel  cost, vehicle class and transmission, to again align to Kaggle.  I'm using the '08s for MPG and fuel cost, as they have the least number of zeroes at a glance.
+Fordgov <- Fordgov[, c("year", "model", "fuelType", "fuelType1", "city08", "highway08", "comb08", "fuelCost08", "trany", "VClass")]
+```
+
+***Section 3: Explore***
+
+This corresponds to our Exploring Price Factors slides:
+
+```{r}
+#Explores price by engine size
+ggplot(KaggleData) +
+  geom_point(aes(x=price, y=engineSize)) 
+
+#Explores price by mileage
+ggplot(KaggleData) +
+  geom_point(aes(x=price, y=mileage)) 
+
+#Explores price by model
+ggplot(KaggleData) +
+  geom_point(aes(x=price, y=model)) 
+```
+
+```{r}
+#regression analyzing engine
+regPriceE <- lm(price ~ engineSize, data = KaggleData)
+regPriceE
+summary(regPriceE)
+
+#regression analyzing mileage
+regPriceM <- lm(price ~ mileage, data = KaggleData)
+regPriceM
+summary(regPriceM)
+
+#multi-regression analyzing mileage, model and fuel type:
+multReg <- lm(price ~  mileage + model + fuelType, data = KaggleData)
+summary(multReg)
+```
+```{r}
+#after seeing the good pvalue on the multiregression, running scatterplot with model as the y, price as the x, and using color to analyze fuel types :
+KaggleData %>% ggplot() +  geom_point() +  aes(x=price,
+                                          y=model, color=fuelType )
++  ggtitle("Prices of different Ford models based on the fuel types")
+```
+
+This corresponds to our Exploring MPG Factors:
+
+```{r}
+#for MPG by city or highway.
+#orders the data by MPG, UCity
+bestMPGCity <- Fordgov[order(-Fordgov$city08),]
+#Returns the top 20 models:
+head(unique(bestMPGCity$model), n=20)
+#you'll notice all the toppers seems to be Electrics... how much does the fuel type play into the MPG?
+```
+
+From the prior data review of str(GOV96to20), one of the "fuelType" columns seem to be the best bets for this.
+
+```{r}
+#reviewing FuelType...
+unique(Fordgov$fuelType)
+#vs FuelType1:
+unique(Fordgov$fuelType1)
+
+```
+
+```{r}
+#Running a box plot to look at average MPG by fuel type for Ford Cars:
+MPGbyFuel <- Fordgov[(Fordgov$fuelType=="Regular" | Fordgov$fuelType=="Diesel"| Fordgov$fuelType=="Electricity"| Fordgov$fuelType=="Regular Gas and Electricity"| Fordgov$fuelType=="CNG"),]
+ggplot(MPGbyFuel, aes(fuelType, comb08)) + geom_boxplot()  
+
+#Unsurprisingly, electric is by far the best MPG (although I was actually a bit surprised to see natural gas as the lowest)
+```
+
+Of course great MPG is one thing, but you also want to consider the annual cost of gas. Which fuel type gives you the best annual gas cost?
+
+```{r}
+#this time, we're going to plot based on the fuel cost...
+ggplot(MPGbyFuel, aes(fuelType, fuelCost08)) + geom_boxplot()  
+
+#electric is still, unsurprisingly, the lowest fuel cost. Premium tends to be more money, and from our prior chart, 
+#isn't really getting you any better MPG.  As far as good MPG and lower cost, electric and then diesel seem to be the way to go (but if you're going to get a car with normal gas, go for regular.. you're not getting more value for premium!)
+```
+This resumes exploration of price factors
+
+```{r}
+#hexbin scatterplot of price and mileage:
+KaggleData %>% ggplot(aes(x=price,y=mileage)) + stat_binhex(bins = 50) + ggtitle("Price and Mileage Scatterplot")
+#We can see the higher the mileage, the cheaper the car, so there's likely a direct correlation.
+#The more expensive cars seem to not fall over a certain mileage
+
+#scatterplots for cost by year, city MPG by year, and and fuel cost by year:
+KaggleData %>% ggplot() + geom_point(aes(x=year, y=price), color="orange") + ggtitle("Scatterplot of Cost of used Ford Cars by year")
+
+#later updated the price by year to also be a hexbin for better visualization:
+ggplot(KaggleData,aes(x=year, y = price)) + stat_binhex(bins = 50) + ggtitle("Scatterplot of Cost of used Ford Cars by year")
+
+#these two wound up being excluded from the final powerpoint, as they didn't seem to be particularly correlated judging from the visualizations...
+
+#scatterplot, fuel cost per year
+Fordgov %>% ggplot() + geom_point(aes(x=year, y=fuelCost08), color="green") + ggtitle("Scatterplot of Fuel Cost of used Ford Cars by year")
+#scatterplot, mileage per year
+KaggleData %>% ggplot() + geom_point(aes(x=year, y=mileage), color="blue") + ggtitle("Scatterplot of Cost of used Ford Cars by year")
+```
+
+
+
+```{r}
+
+x <- KaggleData$year
+y <- KaggleData$price
+
+y_jitter <- jitter(y, factor = 3)
+
+
+#scatterplots for cost by year, city MPG by year, and and fuel cost by year:
+KaggleData %>% ggplot() + geom_point(aes(x=x, y=y_jitter), color="orange") + ggtitle("Scatterplot of Cost of used Ford Cars by year")
+```
+
+
+This corresponds to the "Exploring the Basics" slide from the powerpoint:
+
+```{r}
+#Histogram showing the numver of used cars in the Kaggle data based on year of the car
+ggplot(KaggleData,aes(x=year)) + geom_histogram(bins=12, color = "black", fill="turquoise")
+#We see that most of the observations fall between the years 2013-2020. J Shaped Distribution
+
+
+#histogram to see the count of cars per fuel type in the Kaggle set....
+ggplot(KaggleData,aes(x=fuelType)) + geom_histogram(stat="count", color = "black", fill="orange")
+#most of the data is for petrol (gas) cars and diesel, with a small blip for Hybrids...
+```
+***Section 4: Model***
+
+This corresponds to the Predictive Analytics slides
+
+
+```{r}
+#creates separate datasets for hybrid vs petrol vs diesel
+#Only Hybrid and Petrol Fueltypes
+noHybrid <- subset(KaggleData, fuelType != "Hybrid") 
+
+#Only Hybrid Fueltypes
+Hybrid <- subset(KaggleData, fuelType == "Hybrid")
+
+#Only Petrol Fueltypes 
+Petrol <- subset(KaggleData, fuelType != "Diesel" & fuelType != "Hybrid")
+
+#Only Diesel Fueltypes
+Diesel <- subset(KaggleData, fuelType != "Petrol" & fuelType != "Hybrid")
+
+```
+
+
+```{r}
+#linear modeling for price by mpg, hybrids, petrol(gas) and diesel
+model1 <- lm(formula = price ~ mpg, data = Hybrid)
+summary(model1)
+
+model2 <- lm(formula = price ~ mpg, data = Petrol)
+summary(model2)
+
+model3 <- lm(formula = price ~ mpg, data = Diesel)
+summary(model3)
+
+#p-values are pretty good for all three!
+```
+
+
+***Section 5: iNterpret***
+
+```{r}
+#where are all the electric cars...?
+#this groups the Kaggle set by fuel type, then looks at the year.  It counts the fueltype per year in this grouping.
+FordData %>% group_by(fuelType, year) %>% count(fuelType) 
+
+#Does the same for the .gov data set:
+FordMPG %>% group_by(fuelType, year) %>% count(fuelType) 
+
+```
+
+***End.***
