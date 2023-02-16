@@ -1,1 +1,1 @@
-# Collection of projects completed by Matthew Belizaire
+Collection of projects completed by Matthew Belizaire
